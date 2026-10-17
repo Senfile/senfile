@@ -1,0 +1,44 @@
+# --- Étape de build : installe les dépendances (y compris celles nécessaires
+#     à la compilation de weasyprint/psycopg2) dans un environnement isolé ---
+FROM python:3.12-slim AS builder
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+    libffi-dev shared-mime-info \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# --- Étape finale : image légère, sans outils de compilation ---
+FROM python:3.12-slim
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpango-1.0-0 libpangocairo-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 \
+    shared-mime-info \
+    && rm -rf /var/lib/apt/lists/* \
+    && addgroup --system app && adduser --system --ingroup app app
+
+WORKDIR /app
+
+COPY --from=builder /root/.local /home/app/.local
+COPY . .
+RUN mkdir -p uploads && chown -R app:app /app /home/app/.local
+
+
+ENV PATH=/home/app/.local/bin:$PATH \
+    PYTHONPATH=/home/app/.local/lib/python3.12/site-packages \
+    PYTHONUNBUFFERED=1
+
+
+USER app
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')" || exit 1
+
+ENTRYPOINT ["./entrypoint.sh"]
